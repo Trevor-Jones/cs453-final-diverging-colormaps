@@ -15,6 +15,7 @@
 #include "polyline.h"
 #include "trackball.h"
 #include "tmatrix.h"
+#include <cmath>
 #include <iostream>
 #include <tuple>
 
@@ -200,6 +201,7 @@ double f(double x) {
 	}
 }
 
+//this function takes a vertex and returns the LAB values from the vertex's rgb
 double* cielab(Vertex* v) {
 	double* temp = get_xyz(v);
 	double x = temp[0];
@@ -214,13 +216,40 @@ double* cielab(Vertex* v) {
 	A = 500. * (f(x / xn) - f(y / yn));
 	B = 200. * (f(x / xn) - f(y / yn));
 
-	double lab[3] = { L, A, B };
+	double lab[3];
+	lab[0] = L;
+	lab[1] = A;
+	lab[2] = B;
+
 	printf("printing LAB values for vertex\n");
 	printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
-
 	return lab;
+}
+
+//this function uses LAB variables to get msh
+double* msh(Vertex* v) {
+	double* lab = cielab(v);
+	double L = lab[0];
+	double A = lab[1];
+	double B = lab[2];
+	double M, S, H;
+	printf("printing LAB values for vertex\n");
+	//printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
+	printf("L: %f, A: %f, B: %f\n", L, A, B);
+	double temp = (L * L) + (A * A) + (B * B);
+	printf("temp: %f\n", temp);
+	M = sqrt(temp);
+	S = acos(L / M);
+	H = atan(B / A);
+
+	double msh[3] = { M, S, H };
+	printf("printing msh values for vertex\n");
+	printf("M: %f, S: %f, H: %f\n", msh[0], msh[1], msh[2]);
+	return msh;
 
 }
+
+
 /*display utilities*/
 
 /*
@@ -1211,7 +1240,18 @@ void keyboard(unsigned char key, int x, int y) {
 			//print_rgb(get_vertex(input_x, input_y));
 			
 			//test getting the LAB values
-			cielab(get_vertex(input_x, input_y));
+			//double* lab = cielab(get_vertex(input_x, input_y));
+			//printf("printing LAB values for vertex\n");
+			//printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
+			double* msh_array = msh(get_vertex(input_x, input_y));
+			double m = msh_array[0];
+			double s = msh_array[1];
+			double h = msh_array[2];
+			printf("M: %f, S: %f, H: %f\n", m, s, h);
+
+			printf("M: %f, S: %f, H: %f\n", *msh_array[0],*msh_array[1], *msh_array[2]);
+
+
 		}
 	
 		break;
