@@ -5,6 +5,8 @@
 #include <fstream>
 #include <vector>
 
+#define _USE_MATH_DEFINES
+
 #include "glError.h"
 #include "gl/glew.h"
 #include "gl/freeglut.h"
@@ -30,7 +32,11 @@ icVector3 pickedPoint;
 double matrix[3][3] = { {0.4124564, 0.2126729, 0.0193339},
 								{0.3575761, 0.7151522, 0.1191920},
 								{0.1804375, 0.0721750, 0.9503041} };
-//used for converting to cielab
+
+double inverse_matrix[3][3] = { { 3.24045484, -0.96926639,  0.05564342},
+								{-1.53713885,  1.87601093, -0.20402585},
+								{-0.49853155,  0.04155608,  1.05722516} };
+//used for converting to xyz2lab
 
 
 /*scene related variables*/
@@ -96,35 +102,42 @@ void display_selected_quad(Polyhedron* poly);
 void display_polyhedron(Polyhedron* poly);
 
 //get linear rgb values from sRGB
-void linear_rgb(Vertex* v) {
-	//linear R,G,B
-	double lR, lG, lB;
-	//getting linear values from equation
-	lR = pow(((v->R + 0.055) / 1.055), 2.4);
-	lG = pow(((v->G + 0.055) / 1.055), 2.4);
-	lB = pow(((v->B + 0.055) / 1.055), 2.4);
+double* linear_rgb(double r, double g, double b) {
+	double rgb[3] = { r, g, b };
+	double* linearRgb = new double[3];
+	for (int i = 0; i < 3; i++) {
+		double value = rgb[i] / 255.;
+		if (value > 0.04045) {
+			value = pow(((value + 0.055) / 1.055), 2.4);
+		}
+		else {
+			value = value / 12.92;
+		}
+		linearRgb[i] = value * 100.;
+	}
+	return linearRgb;
+}
 
-	if (lR > 0.04045) {
-		v->R = lR;
-	}
-	else {
-		v->R = v->R / 12.92;
-	}
-	if (lG > 0.04045) {
-		v->G = lG;
-	}
-	else {
-		v->G = v->G / 12.92;
-	}
-	if (lB > 0.04045) {
-		v->B = lB;
-	}
-	else {
-		v->B = v->B / 12.92;
-	}
+double* linear_rgb(Vertex* v) {
+	return linear_rgb(v->R, v->G, v->B);
 
 }
 
+double* sRGB(double r, double g, double b) {
+	double linearRgb[3] = { r, g, b };
+	double* sRgb = new double[3];
+	for (int i = 0; i < 3; i++) {
+		double value = linearRgb[i] / 100.;
+		if (value > 0.00313080495356037152) {
+			value = (1.055 * pow(value, 1. / 2.4)) - 0.055;
+		}
+		else {
+			value = value * 12.92;
+		}
+		sRgb[i] = value * 255.;
+	}
+	return sRgb;
+}
 
 //this function returns the vertex specified by user input
 Vertex* get_vertex(double x, double y) {
@@ -172,25 +185,38 @@ void print_rgb(Vertex* v) {
 }
 
 
-//get xyz space from linear rgb values
-double* get_xyz(Vertex* v) {
-	//initialize variables
-	double a, b, c, temp;
-	a = v->R;
-	b = v->G;
-	c = v->B;
-	double xyz_array[3];
+double* rgb2xyz(double r, double g, double b) {
+	double temp;
+	double* xyz_array = new double[3];
 	for (int i = 0; i < 3; i++) {
-		temp = ((a * matrix[i][0]) + (b * matrix[i][1]) + (c * matrix[i][2]));
+		temp = ((r * matrix[0][i]) + (g * matrix[1][i]) + (b * matrix[2][i]));
 		xyz_array[i] = temp;
 	}
-	printf("printing xyz\n");
-	printf("X: %f, Y: %f, Z: %f\n", xyz_array[0], xyz_array[1], xyz_array[2]);
+
+	// column/row backwards for dot product
+	/*for (int i = 0; i < 3; i++) {
+		temp = ((r * matrix[i][0]) + (g * matrix[i][1]) + (b * matrix[i][2]));
+		xyz_array[i] = temp;
+	}*/
+
+	//printf("printing xyz\n");
+	//printf("X: %f, Y: %f, Z: %f\n", xyz_array[0], xyz_array[1], xyz_array[2]);
 
 	return xyz_array;
 }
 
-//helper function for cielab function
+//get xyz space from linear rgb values
+double* rgb2xyz(Vertex* v) {
+	//initialize variables
+	double a, b, c;
+	a = v->R;
+	b = v->G;
+	c = v->B;
+	
+	return rgb2xyz(a, b, c);
+}
+
+//helper function for xyz2lab function
 double f(double x) {
 	double limit = 0.008856;
 	if (x > limit) {
@@ -201,12 +227,21 @@ double f(double x) {
 	}
 }
 
-//this function takes a vertex and returns the LAB values from the vertex's rgb
-double* cielab(Vertex* v) {
-	double* temp = get_xyz(v);
-	double x = temp[0];
-	double y = temp[1];
-	double z = temp[2];
+double finverse(double x) {
+	double limit = 0.008856;
+	double a = 7.787;
+	double b = 16. / 116.;
+	double ylim = a * limit + b;
+	if (x > ylim) {
+		return x * x * x;
+	}
+	else {
+		return (x - b) / a;
+	}
+}
+
+
+double* xyz2lab(double x, double y, double z) {
 	double L, A, B;
 	double xn = 95.047;
 	double yn = 100.0;
@@ -214,39 +249,162 @@ double* cielab(Vertex* v) {
 
 	L = 116. * (f(y / yn) - (16. / 116.));
 	A = 500. * (f(x / xn) - f(y / yn));
-	B = 200. * (f(x / xn) - f(y / yn));
+	B = 200. * (f(y / yn) - f(z / zn));
 
-	double lab[3];
+	double* lab = new double[3];
 	lab[0] = L;
 	lab[1] = A;
 	lab[2] = B;
 
-	printf("printing LAB values for vertex\n");
-	printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
+	//printf("printing LAB values for vertex\n");
+	//printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
 	return lab;
 }
 
-//this function uses LAB variables to get msh
-double* msh(Vertex* v) {
-	double* lab = cielab(v);
+//this function takes a vertex and returns the LAB values from the vertex's rgb
+double* cielab(Vertex* v) {
+	double* temp = rgb2xyz(v);
+	return xyz2lab(temp[0], temp[1], temp[2]);
+	delete [] temp;
+}
+
+double* lab2msh(double L, double A, double B) {
+	double temp = (L * L) + (A * A) + (B * B);
+
+	double* msh = new double[3];
+	msh[0] = sqrt(temp);
+	msh[1] = acos(L / msh[0]);
+	msh[2] = atan(B / A);
+	//printf("printing msh values for vertex\n");
+	//printf("M: %f, S: %f, H: %f\n", msh[0], msh[1], msh[2]);
+	return msh;
+}
+
+double* rgb2msh(double r, double g, double b) {
+	double* xyz = rgb2xyz(r, g, b);
+	double* lab = xyz2lab(xyz[0], xyz[1], xyz[2]);
+	delete[] xyz;
 	double L = lab[0];
 	double A = lab[1];
 	double B = lab[2];
-	double M, S, H;
-	printf("printing LAB values for vertex\n");
-	//printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
-	printf("L: %f, A: %f, B: %f\n", L, A, B);
-	double temp = (L * L) + (A * A) + (B * B);
-	printf("temp: %f\n", temp);
-	M = sqrt(temp);
-	S = acos(L / M);
-	H = atan(B / A);
-
-	double msh[3] = { M, S, H };
-	printf("printing msh values for vertex\n");
-	printf("M: %f, S: %f, H: %f\n", msh[0], msh[1], msh[2]);
+	delete[] lab;
+	double* msh = lab2msh(L, A, B);
 	return msh;
+}
 
+//this function uses LAB variables to get rgb2msh
+double* rgb2msh(Vertex* v) {
+	return rgb2msh(v->R, v->G, v->B);
+}
+
+double* xyz2rgb(double x, double y, double z) {
+	double temp;
+	double* rgb_array = new double[3];
+	for (int i = 0; i < 3; i++) {
+		temp = ((x * inverse_matrix[0][i]) + (y * inverse_matrix[1][i]) + (z * inverse_matrix[2][i]));
+		rgb_array[i] = temp;
+	}
+	return rgb_array;
+}
+
+double* lab2xyz(double l, double a, double b) {
+	double xn = 95.047;
+	double yn = 100.0;
+	double zn = 108.883;
+
+	double* xyz_array = new double[3];
+	xyz_array[0] = xn * finverse((a / 500.) + (l + 16.) / 116.);
+	xyz_array[1] = yn * finverse((l + 16.) / 116.);
+	xyz_array[2] = zn * finverse((l + 16.) / 116. - (b / 200.));
+
+	return xyz_array;
+}
+
+
+double* msh2lab(double m, double s, double h) {
+	double* lab = new double[3];
+	lab[0] = m * cos(s);
+	lab[1] = m * sin(s) * cos(h);
+	lab[2] = m * sin(s) * sin(h);
+	return lab;
+}
+
+double* msh2rgb(double m, double s, double h) {
+	double* lab_arr = msh2lab(m, s, h);
+	double* xyz_arr = lab2xyz(lab_arr[0], lab_arr[1], lab_arr[2]);
+	delete[] lab_arr;
+	double* rgb_arr = xyz2rgb(xyz_arr[0], xyz_arr[1], xyz_arr[2]);
+	delete[] xyz_arr;
+	return rgb_arr;
+}
+
+double hueSpin(double Msat, double ssat, double hsat, double Munsat) {
+	if (Msat >= Munsat) {
+		return hsat;
+	}
+	else {
+		double hSpin = ssat * sqrt((Munsat * Munsat) - (Msat * Msat)) / (Msat * sin(ssat));
+		if (hsat > -M_PI/3.) {
+			return hsat + hSpin;
+		}
+		else {
+			return hsat - hSpin;
+		}
+	}
+}
+
+double* interpolateColor(double* RGB1, double* RGB2, double interp) {
+	double* linearRGB1 = linear_rgb(RGB1[0], RGB1[1], RGB1[2]);
+	double* msh1 = rgb2msh(linearRGB1[0], linearRGB1[1], linearRGB1[2]);
+	double M1 = msh1[0];
+	double s1 = msh1[1];
+	double h1 = msh1[2];
+	delete[] linearRGB1;
+	delete[] msh1;
+
+	double* linearRGB2 = linear_rgb(RGB2[0], RGB2[1], RGB2[2]);
+	double* msh2 = rgb2msh(linearRGB2[0], linearRGB2[1], linearRGB2[2]);
+	double M2 = msh2[0];
+	double s2 = msh2[1];
+	double h2 = msh2[2];
+	delete[] linearRGB2;
+	delete[] msh2;
+
+	// two saturated points distinct in color, add white between them
+	printf("h diff: %f", fabs(h1 - h2));
+	if (s1 > 0.05 && s2 > 0.05 && fabs(h1 - h2) > (M_PI / 3.)) {
+		double Mmid = M1;
+		if (M2 > Mmid) Mmid = M2;
+		if (88. > Mmid) Mmid = 88.;
+		if (interp < 0.5) {
+			M2 = Mmid;
+			s2 = 0.;
+			h2 = 0;
+			interp = 2 * interp;
+		} 
+		else {
+			M1 = Mmid;
+			s1 = 0.;
+			h1 = 0;
+			interp = 2 * interp - 1;
+		}
+	}
+	if (s1 < 0.05 && s2 > 0.05) {
+		h1 = hueSpin(M2, s2, h2, M1);
+	}
+	else if (s2 < 0.05 && s1 > 0.05) {
+		h2 = hueSpin(M1, s1, h1, M2);
+	}
+
+	double MshMid[3];
+	MshMid[0] = (1 - interp) * M1 + interp * M2;
+	MshMid[1] = (1 - interp) * s1 + interp * s2;
+	MshMid[2] = (1 - interp) * h1 + interp * h2;
+
+	double* rgb_arr = msh2rgb(MshMid[0], MshMid[1], MshMid[2]);
+	double* srgb_arr = sRGB(rgb_arr[0], rgb_arr[1], rgb_arr[2]);
+	delete[] rgb_arr;
+	return srgb_arr;
 }
 
 
@@ -353,7 +511,7 @@ int main(int argc, char* argv[])
 {
 	/*load mesh from ply file*/
 	//FILE* this_file = fopen("../quadmesh_2D/vector_data/saddle.ply", "r");
-	FILE* this_file = fopen("../quadmesh_2D/scalar_data/sin_function.ply", "r");
+	FILE* this_file = fopen("../quadmesh_2D/scalar_data/x_plus_y.ply", "r");
 
 	poly = new Polyhedron(this_file);
 	fclose(this_file);
@@ -1169,16 +1327,30 @@ void keyboard(unsigned char key, int x, int y) {
 			}
 
 		}
+		//double rgb1[] = { 180, 20, 50 };
+		//double rgb2[] = { 50,20,180 };
+		double rgb1[] = { 180, 20, 50 };
+		double rgb2[] = { 50,150,30 };
+
 		std::vector<int> c1 = { 255,0,255 };
 		std::vector<int> c2 = { 153,255,51 };
 		for (int i = 0; i < poly->nverts; i++) {
 			Vertex* temp_v = poly->vlist[i];
-			double scalar = temp_v->scalar;
+			double scalar =(temp_v->scalar - min) / (max - min);
 
+			double* rgb = interpolateColor(rgb1, rgb2, scalar);
+
+			temp_v->R = rgb[0] / 255;
+			temp_v->G = rgb[1] / 255;
+			temp_v->B = rgb[2] / 255;
+
+			printf("r: %f\tg: %f\tb: %f\n", rgb[0], rgb[1], rgb[2]);
 			
-			temp_v->R = ((255 / 255 * (scalar - min) / (max - min)) + (153 / 255 * (max - scalar) / (max - min)));
-			temp_v->G = ((0 * (scalar - min) / (max - min)) + (255 / 255 * (max - scalar) / (max - min)));
-			temp_v->B = ((255 / 255 * (scalar - min) / (max - min)) + (51 / 255 * (max - scalar) / (max - min)));
+			delete[] rgb;
+
+			//temp_v->R = ((255 / 255 * (scalar - min) / (max - min)) + (153 / 255 * (max - scalar) / (max - min)));
+			//temp_v->G = ((0 * (scalar - min) / (max - min)) + (255 / 255 * (max - scalar) / (max - min)));
+			//temp_v->B = ((255 / 255 * (scalar - min) / (max - min)) + (51 / 255 * (max - scalar) / (max - min)));
 			
 		}
 
@@ -1240,16 +1412,50 @@ void keyboard(unsigned char key, int x, int y) {
 			//print_rgb(get_vertex(input_x, input_y));
 			
 			//test getting the LAB values
-			//double* lab = cielab(get_vertex(input_x, input_y));
+			//double* lab = xyz2lab(get_vertex(input_x, input_y));
 			//printf("printing LAB values for vertex\n");
 			//printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
-			double* msh_array = msh(get_vertex(input_x, input_y));
-			double m = msh_array[0];
-			double s = msh_array[1];
-			double h = msh_array[2];
-			printf("M: %f, S: %f, H: %f\n", m, s, h);
 
-			printf("M: %f, S: %f, H: %f\n", *msh_array[0],*msh_array[1], *msh_array[2]);
+			double* xyz_arr1 = rgb2xyz(180, 20, 180);
+			printf("hello x: %f, y: %f, z: %f\n", xyz_arr1[0], xyz_arr1[1], xyz_arr1[2]);
+
+			double* lab_arr1 = xyz2lab(xyz_arr1[0], xyz_arr1[1], xyz_arr1[2]);
+			printf("hello l: %f, a: %f, b: %f\n", lab_arr1[0], lab_arr1[1], lab_arr1[2]);
+
+			double* xyz_arr2 = lab2xyz(lab_arr1[0], lab_arr1[1], lab_arr1[2]);
+			printf("hello x: %f, y: %f, z: %f\n", xyz_arr2[0], xyz_arr2[1], xyz_arr2[2]);
+
+			double* rgb_arr = xyz2rgb(xyz_arr2[0], xyz_arr2[1], xyz_arr2[2]);
+			printf("hello r: %f, g: %f, b: %f\n", rgb_arr[0], rgb_arr[1], rgb_arr[2]);
+			delete[] xyz_arr1;
+			delete[] lab_arr1;
+			delete[] xyz_arr2;
+			delete[] rgb_arr;
+
+
+			double* msh_array = rgb2msh(get_vertex(input_x, input_y));
+			Vertex* v = get_vertex(input_x, input_y);
+			printf("actual r: %f, g: %f, b: %f\n", v->R, v->G, v->B);
+			printf("actual M: %f, S: %f, H: %f\n", msh_array[0], msh_array[1], msh_array[2]);
+			double* rgb_array = msh2rgb(msh_array[0], msh_array[1], msh_array[2]);
+			printf("converted back to r: %f, g: %f, b: %f\n", rgb_array[0], rgb_array[1], rgb_array[2]);
+			delete[] msh_array;
+
+
+			double* linearRgb = linear_rgb(180, 20, 180);
+			printf("calc linear rgb r: %f, g: %f, b: %f\n", linearRgb[0], linearRgb[1], linearRgb[2]);
+			double* sRgb = sRGB(linearRgb[0], linearRgb[1], linearRgb[2]);
+			printf("new sRgb back to r: %f, g: %f, b: %f\n", sRgb[0], sRgb[1], sRgb[2]);
+
+			/*double* xyz_arr = rgb2xyz(12.743, 0.69954, 12.743);
+			double x = xyz_arr[0];
+			double y = xyz_arr[1];
+			double z = xyz_arr[2];
+			printf("x: %f, y: %f, z: %f\n", xyz_arr[0], xyz_arr[1], xyz_arr[2]);
+			double* rgb_arr = xyz2rgb(x, y, z);
+			printf("r: %f, g: %f, b: %f\n", rgb_arr[0], rgb_arr[1], rgb_arr[2]);*/
+
+			//printf("M: %f, S: %f, H: %f\n", *msh_array[0],*msh_array[1], *msh_array[2]);
 
 
 		}
