@@ -1,0 +1,9 @@
+learnply_2020_v2/Debug/
+learnply_2020_v2/Release/
+learnply_2020_v2/learnply/.vs/
+
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
