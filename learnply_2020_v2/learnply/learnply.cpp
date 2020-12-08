@@ -15,8 +15,22 @@
 #include "polyline.h"
 #include "trackball.h"
 #include "tmatrix.h"
+#include <iostream>
+#include <tuple>
+
+using namespace std;
 
 Polyhedron* poly;
+
+bool showPickedPoint;
+icVector3 pickedPoint;
+
+//transfer matrix used to get xyz
+double matrix[3][3] = { {0.4124564, 0.2126729, 0.0193339},
+								{0.3575761, 0.7151522, 0.1191920},
+								{0.1804375, 0.0721750, 0.9503041} };
+//used for converting to cielab
+
 
 /*scene related variables*/
 const float zoomspeed = 0.9;
@@ -80,6 +94,133 @@ void display_selected_quad(Polyhedron* poly);
 /*display vis results*/
 void display_polyhedron(Polyhedron* poly);
 
+//get linear rgb values from sRGB
+void linear_rgb(Vertex* v) {
+	//linear R,G,B
+	double lR, lG, lB;
+	//getting linear values from equation
+	lR = pow(((v->R + 0.055) / 1.055), 2.4);
+	lG = pow(((v->G + 0.055) / 1.055), 2.4);
+	lB = pow(((v->B + 0.055) / 1.055), 2.4);
+
+	if (lR > 0.04045) {
+		v->R = lR;
+	}
+	else {
+		v->R = v->R / 12.92;
+	}
+	if (lG > 0.04045) {
+		v->G = lG;
+	}
+	else {
+		v->G = v->G / 12.92;
+	}
+	if (lB > 0.04045) {
+		v->B = lB;
+	}
+	else {
+		v->B = v->B / 12.92;
+	}
+
+}
+
+
+//this function returns the vertex specified by user input
+Vertex* get_vertex(double x, double y) {
+	Quad* q = NULL;
+	double x1, y1, x2, y2;
+	for (int i = 0; i < poly->nquads; i++) {
+		q = poly->qlist[i];
+		x1 = q->verts[0]->x;
+		y1 = q->verts[0]->y;
+		x2 = q->verts[0]->x;
+		y2 = q->verts[0]->y;
+
+		for (int j = 0; j < 4; j++) {
+			if (x1 >= q->verts[j]->x) {
+				x1 = q->verts[j]->x;
+			}
+			if (x2 <= q->verts[j]->x) {
+				x2 = q->verts[j]->x;
+			}
+			if (y1 >= q->verts[j]->y) {
+				y1 = q->verts[j]->y;
+			}
+			if (y2 <= q->verts[j]->y) {
+				y2 = q->verts[j]->y;
+			}
+		}
+		//similar to how we find x1,x2,y1,y2 in hw2
+		if (x <= x2 && x >= x1 && y <= y2 && y >= y1) {
+			break;
+		}
+	}
+
+	for (int i = 0; i < 4; i++) {
+		//cout << "vertex " << i << endl;
+		//cout << "x = " << q->verts[i]->x << ", y = " << q->verts[i]->y << endl;
+		if (x1 == q->verts[i]->x && y1 == q->verts[i]->y) {
+			return q->verts[i];
+		}
+	}
+}
+
+//this function prints the rgb value at a specific vertex
+void print_rgb(Vertex* v) {
+	printf("R: %f, G: %f, B: %f\n", v->R, v->G, v->B);
+}
+
+
+//get xyz space from linear rgb values
+double* get_xyz(Vertex* v) {
+	//initialize variables
+	double a, b, c, temp;
+	a = v->R;
+	b = v->G;
+	c = v->B;
+	double xyz_array[3];
+	for (int i = 0; i < 3; i++) {
+		temp = ((a * matrix[i][0]) + (b * matrix[i][1]) + (c * matrix[i][2]));
+		xyz_array[i] = temp;
+	}
+	printf("printing xyz\n");
+	printf("X: %f, Y: %f, Z: %f\n", xyz_array[0], xyz_array[1], xyz_array[2]);
+
+	return xyz_array;
+}
+
+//helper function for cielab function
+double f(double x) {
+	double limit = 0.008856;
+	if (x > limit) {
+		return pow(x, (1. / 3.));
+	}
+	else {
+		return 7.787 * x + 16. / 116.;
+	}
+}
+
+double* cielab(Vertex* v) {
+	double* temp = get_xyz(v);
+	double x = temp[0];
+	double y = temp[1];
+	double z = temp[2];
+	double L, A, B;
+	double xn = 95.047;
+	double yn = 100.0;
+	double zn = 108.883;
+
+	L = 116. * (f(y / yn) - (16. / 116.));
+	A = 500. * (f(x / xn) - f(y / yn));
+	B = 200. * (f(x / xn) - f(y / yn));
+
+	double lab[3] = { L, A, B };
+	printf("printing LAB values for vertex\n");
+	printf("L: %f, A: %f, B: %f\n", lab[0], lab[1], lab[2]);
+
+	return lab;
+
+}
 /*display utilities*/
 
 /*
@@ -981,6 +1122,101 @@ void keyboard(unsigned char key, int x, int y) {
 		//show the IBFV of the field
 		break;
 
+
+	case 't':
+	{
+		//test case used for putting color in each vertex
+		display_mode = 3;
+		double min = poly->vlist[0]->scalar;
+		double max = poly->vlist[0]->scalar;
+		for (int i = 0; i < poly->nverts; i++) {
+			Vertex* temp_v = poly->vlist[i];
+			double scalar = temp_v->scalar;
+			if (scalar < min) {
+				min = scalar;
+			}
+			if (scalar > max) {
+				max = scalar;
+			}
+
+		}
+		std::vector<int> c1 = { 255,0,255 };
+		std::vector<int> c2 = { 153,255,51 };
+		for (int i = 0; i < poly->nverts; i++) {
+			Vertex* temp_v = poly->vlist[i];
+			double scalar = temp_v->scalar;
+
+			
+			temp_v->R = ((255 / 255 * (scalar - min) / (max - min)) + (153 / 255 * (max - scalar) / (max - min)));
+			temp_v->G = ((0 * (scalar - min) / (max - min)) + (255 / 255 * (max - scalar) / (max - min)));
+			temp_v->B = ((255 / 255 * (scalar - min) / (max - min)) + (51 / 255 * (max - scalar) / (max - min)));
+			
+		}
+
+		glutPostRedisplay();
+		break;
+
+	}
+	
+	//press 't' to color the space and this case to test
+	case'p':
+	{
+		//case to print the color of the selected point
+		showPickedPoint = !showPickedPoint;
+		if (showPickedPoint) {
+			//get the dimension
+			for (int i = 0; i < poly->nverts; i++) {
+				if (i == 0) {
+					//create minx, minym maxx, maxy variables in polyhedron to save the dimension
+					poly->minx = poly->vlist[i]->x;
+					poly->maxx = poly->vlist[i]->x;
+					poly->miny = poly->vlist[i]->y;
+					poly->maxy = poly->vlist[i]->y;
+				}
+				else {
+					if (poly->vlist[i]->x < poly->minx)
+						poly->minx = poly->vlist[i]->x;
+					if (poly->vlist[i]->x > poly->maxx)
+						poly->maxx = poly->vlist[i]->x;
+					if (poly->vlist[i]->y < poly->miny)
+						poly->miny = poly->vlist[i]->y;
+					if (poly->vlist[i]->y > poly->maxy)
+						poly->maxy = poly->vlist[i]->y;
+				}
+			}
+			printf("The x coordinate of mesh ranges [%.3f,%.3f]\n", poly->minx, poly->maxx);
+			printf("The y coordinate of mesh ranges [%.3f,%.3f]\n", poly->miny, poly->maxy);
+
+			//type the picked point
+			float input_x, input_y;
+			bool valid_input_x = false;
+			bool valid_input_y = false;
+
+			cout << "please input the location" <<endl;
+			while (!valid_input_x) {
+				cout << "please input the x:" << endl;
+				cin >> input_x;
+				if (input_x <= poly->maxx && input_x >= poly->minx) {
+					valid_input_x = true;
+				}
+			}
+			while (!valid_input_y) {
+				cout << "please input the y:" <<endl;
+				cin >> input_y;
+				if (input_y <= poly->maxy && input_y >= poly->miny) {
+					valid_input_y = true;
+				}
+			}
+			pickedPoint.set(input_x, input_y, 0);
+			//print_rgb(get_vertex(input_x, input_y));
+			
+			//test getting the LAB values
+			cielab(get_vertex(input_x, input_y));
+		}
+	
+		break;
+	}
+
 	case 'r':
 		mat_ident(rotmat);
 		translation[0] = 0;
@@ -1112,6 +1348,7 @@ void display_polyhedron(Polyhedron* poly)
 		}
 	}
 	break;
+
 
 	case 5:
 		displayIBFV();

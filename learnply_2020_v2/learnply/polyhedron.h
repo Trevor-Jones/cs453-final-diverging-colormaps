@@ -94,6 +94,11 @@ public:
 
 	unsigned char orientation;  // 0=ccw, 1=cw
 
+	float maxx;
+	float maxy;
+	float minx;
+	float miny;
+
 	PlyOtherProp *vert_other,*face_other;
 
 	/*constructors*/
