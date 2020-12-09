@@ -28,6 +28,8 @@ public:
 
 	double R = 0, G = 0, B = 0;		/*color*/
 
+	int vertex_type = 0;
+
 	int index;
 
 	int nquads;
@@ -49,6 +51,9 @@ public:
 	int index;
 
 	Vertex *verts[2];
+
+	int is_crossing = 0;
+	Vertex* crossing = NULL;
 
 	int nquads;
 	Quad **quads;

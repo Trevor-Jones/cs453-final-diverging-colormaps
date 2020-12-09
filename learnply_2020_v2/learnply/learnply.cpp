@@ -77,6 +77,11 @@ unsigned char *pixels;
 
 #define DM  ((float) (1.0/(100-1.0)))
 
+/* Contour Variables */
+
+std::vector<std::pair<PolyLine, float>> contours;
+const int num_intervals = 20;
+
 /******************************************************************************
 Forward declaration of functions
 ******************************************************************************/
@@ -371,7 +376,7 @@ double* interpolateColor(double* RGB1, double* RGB2, double interp) {
 	delete[] msh2;
 
 	// two saturated points distinct in color, add white between them
-	printf("h diff: %f", fabs(h1 - h2));
+	//printf("h diff: %f", fabs(h1 - h2));
 	if (s1 > 0.05 && s2 > 0.05 && fabs(h1 - h2) > (M_PI / 3.)) {
 		double Mmid = M1;
 		if (M2 > Mmid) Mmid = M2;
@@ -407,6 +412,90 @@ double* interpolateColor(double* RGB1, double* RGB2, double interp) {
 	return srgb_arr;
 }
 
+void get_contours(int height_mul) {
+	contours.clear();
+	// find out max and min scalar values
+	double min = poly->vlist[0]->scalar;
+	double max = poly->vlist[0]->scalar;
+	for (int i = 0; i < poly->nverts; i++) {
+		Vertex* temp_v = poly->vlist[i];
+		double scalar = temp_v->scalar;
+		if (scalar > max) {
+			max = scalar;
+		}
+		else if (scalar < min) {
+			min = scalar;
+		}
+	}
+
+	// iterate through once for each interval, and create a contour for that s_0
+	for (int j = 0; j < num_intervals; j++) {
+		double s_0 = (((double)j / (double)num_intervals) * (max - min)) + min;
+		PolyLine contour;
+		printf("s_0 = %f\n", s_0);
+
+		// iterate through each vertex and classify them by if the are bigger or smaller than s_0 
+		for (int i = 0; i < poly->nverts; i++) {
+			Vertex* v = poly->vlist[i];
+			if (v->scalar > s_0) {
+				v->vertex_type = 1;
+			}
+			else {
+				v->vertex_type = -1;
+			}
+			v->z = (v->scalar - min) / (max - min) * height_mul;
+		}
+
+		// iterate through each edge, and find the ones with different vertex types on each side
+		// then interpolate to find the intersection and create a vertex there
+		for (int i = 0; i < poly->nedges; i++) {
+			Edge* temp_e = poly->elist[i];
+			if (temp_e->verts[0]->vertex_type != temp_e->verts[1]->vertex_type) {
+				double alpha = (s_0 - temp_e->verts[0]->scalar) / (temp_e->verts[1]->scalar - temp_e->verts[0]->scalar);
+				double v_x = alpha * (temp_e->verts[1]->x - temp_e->verts[0]->x) + temp_e->verts[0]->x;
+				double v_y = alpha * (temp_e->verts[1]->y - temp_e->verts[0]->y) + temp_e->verts[0]->y;
+				double v_z = alpha * (temp_e->verts[1]->z - temp_e->verts[0]->z) + temp_e->verts[0]->z;
+				Vertex* v = new Vertex(v_x, v_y, v_z);
+				temp_e->is_crossing = 1;
+				temp_e->crossing = v;
+			}
+		}
+
+		// iterate through all the quads and their edges, creating lines between any edges in a quad with crossing vertexes
+		for (int i = 0; i < poly->nquads; i++) {
+			Quad* q = poly->qlist[i];
+			Vertex* last_vertex = NULL;
+
+			for (int k = 0; k < 4; k++) {
+				Edge* e = q->edges[k];
+				if (e->is_crossing > 0) {
+					if (last_vertex) {
+						LineSegment line(e->crossing->x, e->crossing->y, e->crossing->z, last_vertex->x, last_vertex->y, last_vertex->z);
+						(contour).push_back(line);
+					}
+					last_vertex = e->crossing;
+				}
+			}
+		}
+
+		// remove the vertex_type and crossing vertexes for this s_0 contour so we can find the next countour
+		for (int i = 0; i < poly->nquads; i++) {
+			Quad* q = poly->qlist[i];
+
+			for (int k = 0; k < 4; k++) {
+				Edge* e = q->edges[k];
+				if (e->crossing)
+					delete(e->crossing);
+				e->crossing = NULL;
+				e->is_crossing = 0;
+				e->verts[0]->vertex_type = 0;
+				e->verts[1]->vertex_type = 0;
+			}
+		}
+
+		contours.push_back(std::pair<PolyLine, float>(contour, s_0));
+	}
+}
 
 /*display utilities*/
 
@@ -511,7 +600,7 @@ int main(int argc, char* argv[])
 {
 	/*load mesh from ply file*/
 	//FILE* this_file = fopen("../quadmesh_2D/vector_data/saddle.ply", "r");
-	FILE* this_file = fopen("../quadmesh_2D/scalar_data/x_plus_y.ply", "r");
+	FILE* this_file = fopen("../quadmesh_2D/scalar_data/2x_square_plus_y_square.ply", "r");
 
 	poly = new Polyhedron(this_file);
 	fclose(this_file);
@@ -1420,6 +1509,13 @@ void keyboard(unsigned char key, int x, int y) {
 		break;
 
 	}
+
+	case 'u':
+	{
+		get_contours(0);
+		display_mode = 6;
+		break;
+	}
 	
 	//press 't' to color the space and this case to test
 	case'p':
@@ -1656,6 +1752,43 @@ void display_polyhedron(Polyhedron* poly)
 		}
 	}
 	break;
+
+	case 6:
+	{
+		double scalar_values[num_intervals] = {};
+		for (int i = 0; i < num_intervals; i++) {
+			scalar_values[i] = contours[i].second;
+		}
+
+		double max = scalar_values[num_intervals - 1];
+		double min = scalar_values[0];
+
+		double rgb1[] = { 180, 20, 50 };
+		double rgb2[] = { 50,150,30 };
+
+		for (int i = 0; i < num_intervals; i++) {
+			double scalar = (scalar_values[i] - min) / (max - min);
+
+			double* rgb = interpolateColor(rgb1, rgb2, scalar);
+
+			drawPolyline((contours[i].first), 2.0, rgb[0] / 255, rgb[1] / 255, rgb[2] / 255);
+			delete[] rgb;
+		}
+
+		//display the mesh with color cyan (0.0, 1.0, 1.0)
+		glDisable(GL_LIGHTING);
+		for (int i = 0; i < poly->nquads; i++) {
+			Quad* temp_q = poly->qlist[i];
+			glBegin(GL_POLYGON);
+			for (int j = 0; j < 4; j++) {
+				Vertex* temp_v = temp_q->verts[j];
+				glColor3f(0.7, 0.7, 0.7);
+				glVertex3d(temp_v->x, temp_v->y, temp_v->z);
+			}
+			glEnd();
+		}
+		break;
+	}
 
 
 	case 5:
