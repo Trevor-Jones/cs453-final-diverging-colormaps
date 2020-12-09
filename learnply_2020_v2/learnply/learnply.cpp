@@ -1358,6 +1358,68 @@ void keyboard(unsigned char key, int x, int y) {
 		break;
 
 	}
+
+	// test case for displaying color map on mesh with control point stretching the colored section
+	case 'y':
+	{
+		//test case used for putting color in each vertex
+		display_mode = 3;
+		double min = poly->vlist[0]->scalar;
+		double max = poly->vlist[0]->scalar;
+		for (int i = 0; i < poly->nverts; i++) {
+			Vertex* temp_v = poly->vlist[i];
+			double scalar = temp_v->scalar;
+			if (scalar < min) {
+				min = scalar;
+			}
+			if (scalar > max) {
+				max = scalar;
+			}
+
+		}
+		//double rgb1[] = { 180, 20, 50 };
+		//double rgb2[] = { 50,20,180 };
+		double rgb1[] = { 180, 20, 50 };
+		double rgb3[] = { 130, 60, 45 }; // control point
+		double rgb2[] = { 50,150,30 };
+
+		double control_point_loc = 0.5; // range in [0,1] to put the control point. Scalar values at this point will be the same color as control point
+										// values between 0 and this value will be interpolated between rgb1 and rbg3. values above interpolate between rgb3 and rgb2
+
+		std::vector<int> c1 = { 255,0,255 };
+		std::vector<int> c2 = { 153,255,51 };
+		for (int i = 0; i < poly->nverts; i++) {
+			Vertex* temp_v = poly->vlist[i];
+			double scalar = (temp_v->scalar - min) / (max - min);
+			double* rgb;
+			if (scalar <= control_point_loc) {
+				scalar = (scalar) / (control_point_loc);
+				rgb = interpolateColor(rgb1, rgb3, scalar);
+			}
+			else {
+				scalar = (scalar - control_point_loc) / (1 - control_point_loc);
+				rgb = interpolateColor(rgb3, rgb2, scalar);
+			}
+
+
+			temp_v->R = rgb[0] / 255;
+			temp_v->G = rgb[1] / 255;
+			temp_v->B = rgb[2] / 255;
+
+			printf("r: %f\tg: %f\tb: %f\n", rgb[0], rgb[1], rgb[2]);
+
+			delete[] rgb;
+
+			//temp_v->R = ((255 / 255 * (scalar - min) / (max - min)) + (153 / 255 * (max - scalar) / (max - min)));
+			//temp_v->G = ((0 * (scalar - min) / (max - min)) + (255 / 255 * (max - scalar) / (max - min)));
+			//temp_v->B = ((255 / 255 * (scalar - min) / (max - min)) + (51 / 255 * (max - scalar) / (max - min)));
+
+		}
+
+		glutPostRedisplay();
+		break;
+
+	}
 	
 	//press 't' to color the space and this case to test
 	case'p':
